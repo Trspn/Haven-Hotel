@@ -5,6 +5,7 @@ from room import Room
 from card import Card
 from stay import Stay
 from item_service import ItemService
+from service_provider import ServiceProvider
 
 class Admin:
     def __init__(self, name: str):
@@ -12,8 +13,8 @@ class Admin:
         self.customers: List[Customer] = []
         self.rooms: List[Room] = []
         self.reservations = {}
-        self.service_providers = {} # To store service providers
-        self.cards: List[Card] = [] # Keep track of all cards
+        self.service_providers = {}
+        self.cards: List[Card] = []
 
     def add_service_provider(self, provider):
         self.service_providers[provider.name] = provider
@@ -27,76 +28,115 @@ class Admin:
     def add_customer(self, customer: Customer):
         self.customers.append(customer)
 
-    def check_in(self, customer_id: str, room_number: str, payment_done: bool = False) -> bool:
+    def add_reservation(self, customer_id: str, room: Room, length: int):
+        customer = next((c for c in self.customers if c.customer_id == customer_id), None)
+        if not customer:
+            return False
+        stay = Stay(customer, room, datetime.now(), length)
+        stay.is_active = False
+        self.reservations[customer_id] = stay
+        customer.assign_stay(stay)
+        return True
+
+    def update_reservation(self, customer_id: str, room: Room = None, length: int = None):
+        if customer_id not in self.reservations or not self.reservations[customer_id]:
+            return False
+        stay = self.reservations[customer_id]
+        if stay.is_active:
+            return False  # Cannot update an active (checked-in) stay
+        if room:
+            stay.room = room
+        if length is not None:
+            stay.length = length
+        self.reservations[customer_id] = stay
+        stay.customer.assign_stay(stay)
+        return True
+
+    def delete_reservation(self, customer_id: str):
+        if customer_id not in self.reservations or not self.reservations[customer_id]:
+            return False
+        stay = self.reservations[customer_id]
+        if stay.is_active:
+            return False  # Cannot delete an active (checked-in) stay
+        del self.reservations[customer_id]
+        customer = next((c for c in self.customers if c.customer_id == customer_id), None)
+        if customer:
+            customer.stay = None
+        return True
+
+    def check_in(self, customer_id: str, payment_done: bool = False) -> bool:
         customer = next((c for c in self.customers if c.customer_id == customer_id), None)
         if not customer:
             print(f"Customer with ID {customer_id} not found.")
             return False
 
-        if customer_id not in self.reservations:
+        if customer_id not in self.reservations or not self.reservations[customer_id]:
             print(f"Reservation for customer {customer_id} not found.")
             return False
 
         if not payment_done:
             print(f"Customer {customer.name} needs to pay for the reservation.")
-            payment_done = True
-
-        if not payment_done:
-            print("Payment not completed. Check-in failed.")
             return False
 
-        room = next((r for r in self.rooms if r.room_number == room_number), None)
-        if not room:
-            print(f"Room {room_number} not found.")
+        stay = self.reservations[customer_id]
+        if stay.is_active:
+            print(f"Customer {customer.name} is already checked in.")
             return False
 
+        room = stay.room
         card = Card(card_id=f"CARD-{customer_id}", room=room)
         card.activate()
         customer.assign_card(card)
-        self.cards.append(card) # Track the new card
+        self.cards.append(card)
 
-        stay = Stay(customer, room, datetime.now())
+        stay.is_active = True
         customer.assign_stay(stay)
         self.reservations[customer_id] = stay
 
         print(f"Customer {customer.name} successfully checked in to {room} and received {card}.")
         return True
 
-    def check_out(self, customer_id: str) -> bool:
+    def check_out(self, customer_id: str) -> (bool, str):
+        customer = next((c for c in self.customers if c.customer_id == customer_id), None)
+        if not customer or not customer.stay or not customer.stay.is_active:
+            return False, f"Customer {customer_id} is not checked in or has no active stay."
+
+        if not customer.card:
+            return False, f"Customer {customer.name} has no card to return."
+
+        if not customer.card.is_active:
+            return False, f"Card for {customer.name} is not active."
+
+        charges = customer.stay.get_service_charges()
+        if charges > 0:
+            print(f"Customer {customer.name} incurred additional charges: ${charges}")
+            print(f"Customer {customer.name} paid additional charges: ${charges}")
+
+        # Remove the card from the system
+        self.cards.remove(customer.card)
+        customer.card.deactivate()
+        customer.card = None
+
+        # End the stay and record the check-out time
+        check_in_time = customer.stay.start_date
+        check_out_time = datetime.now()
+        customer.stay.end_stay(check_out_time)
+
+        # Remove the reservation from the list
+        if customer_id in self.reservations:
+            del self.reservations[customer_id]
+
+        message = (f"Customer {customer.name} (ID: {customer_id}) checked in at {check_in_time} "
+                   f"and checked out at {check_out_time}.")
+        print(message)
+        return True, message
+
+    def add_service_to_room(self, customer_id: str, service_name: str):
         customer = next((c for c in self.customers if c.customer_id == customer_id), None)
         if not customer or not customer.stay or not customer.stay.is_active:
             print(f"Customer {customer_id} is not checked in or has no active stay.")
             return False
 
-        if not customer.card:
-            print(f"Customer {customer.name} has no card to return.")
-            return False
-
-        if not customer.card.is_active:
-            print(f"Card for {customer.name} is not active.")
-            return False
-
-        charges = customer.stay.room.get_service_charges()
-        if charges > 0:
-            print(f"Customer {customer.name} incurred additional charges: ${charges}")
-            print(f"Customer {customer.name} paid additional charges: ${charges}")
-
-        customer.card.deactivate()
-        customer.stay.end_stay(datetime.now())
-        print(f"Customer {customer.name} stay ended at {customer.stay.end_date}.")
-        print(f"Customer {customer.name} successfully checked out.")
-        return True
-
-    def add_reservation(self, customer_id: str):
-        self.reservations[customer_id] = None
-
-    def add_service_to_room(self, customer_id: str, service_name: str):
-        customer = next((c for c in self.customers if c.customer_id == customer_id), None)
-        if not customer or not customer.stay or not customer.stay.is_active or not customer.stay.room:
-            print(f"Customer {customer_id} is not checked in or has no active stay with a room.")
-            return False
-
-        room = customer.stay.room
         hotel_provider = self.get_service_provider("Hotel")
         if not hotel_provider:
             print("Hotel service provider not found.")
@@ -108,43 +148,52 @@ class Admin:
             return False
 
         try:
-            room.add_service(service_item, customer)
-            print(f"Service '{service_name}' added to Room {room.room_number} for Customer {customer.name}.")
+            customer.stay.add_service(service_item)
+            print(f"Service '{service_name}' added to stay for Customer {customer.name} in Room {customer.stay.room.room_number}.")
             return True
-        except ValueError as e:
+        except Exception as e:
             print(f"Error adding service: {e}")
             return False
 
     def generate_customer_service_record(self, customer_id: str) -> Optional[str]:
         customer = next((c for c in self.customers if c.customer_id == customer_id), None)
-        if not customer or not customer.stay or not customer.stay.room:
-            return f"Customer with ID {customer_id} is not checked in or has no active stay."
+        if not customer or not customer.stay:
+            return f"Customer with ID {customer_id} has no active stay."
 
-        service_record = customer.stay.room.service_record
+        service_record = customer.stay.service_record
         if not service_record:
-            return f"No services used by Customer {customer.name} in Room {customer.stay.room.room_number}."
+            return f"No services used by Customer {customer.name} during their stay in Room {customer.stay.room.room_number}."
 
         report = f"--- Service Record for Customer {customer.name} (ID: {customer.customer_id}) ---\n"
         report += f"Room: {customer.stay.room.room_number}\n"
         for item in service_record:
             report += f"- {item.name}: ${item.price}\n"
         report += f"-------------------------------------------------------------------\n"
-        report += f"Total Service Charges: ${customer.stay.room.get_service_charges()}\n"
+        report += f"Total Service Charges: ${customer.stay.get_service_charges()}\n"
         return report
 
     def get_room_occupancy_details(self) -> str:
         report = "--- Room Occupancy Status ---\n"
         for room in self.rooms:
             customer = next((c for c in self.customers if c.stay and c.stay.room == room and c.stay.is_active), None)
-            card_info = "No card assigned"
-            if customer and customer.card:
-                card_info = f"Card ID: {customer.card.card_id}, Active: {customer.card.is_active}"
+            cards = [card for card in self.cards if card.room == room]
 
             customer_info = "Vacant"
             if customer:
-                customer_info = f"Customer: {customer.name} (ID: {customer.customer_id})"
+                customer_info = f"Occupied by Customer: {customer.name} (ID: {customer.customer_id})"
 
-            report += f"Room: {room.room_number}, Status: {customer_info}, {card_info}\n"
+            report += f"Room: {room.room_number}, Status: {customer_info}\n"
+            report += "  Cards:\n"
+            if not cards:
+                report += "    - None\n"
+            else:
+                for card in cards:
+                    assigned_to = "Unassigned"
+                    for cust in self.customers:
+                        if cust.card == card:
+                            assigned_to = f"Assigned to: {cust.name}"
+                            break
+                    report += f"    - Card ID: {card.card_id}, Active: {card.is_active}, {assigned_to}\n"
         report += "-----------------------------\n"
         return report
 
@@ -167,7 +216,6 @@ class Admin:
     def delete_card(self, card_id: str) -> bool:
         card_to_delete = next((card for card in self.cards if card.card_id == card_id), None)
         if card_to_delete:
-            # Also need to disassociate it from the customer if it's assigned
             for customer in self.customers:
                 if customer.card == card_to_delete:
                     customer.card = None
@@ -195,3 +243,37 @@ class Admin:
             return True
         print(f"Card with ID {card_id} not found.")
         return False
+
+    def request_service(self, customer_id: str, service_name: str) -> (bool, str):
+        customer = next((c for c in self.customers if c.customer_id == customer_id), None)
+        if not customer or not customer.stay or not customer.stay.is_active:
+            return False, "Customer not found or not checked in."
+        provider = self.get_service_provider("Hotel")
+        if not provider:
+            return False, "Service provider not found."
+        item = next((item for item in provider.items if item.name == service_name), None)
+        if not item:
+            return False, "Service not found."
+        customer.stay.pending_services.append(item)
+        return True, f"Service '{service_name}' requested for customer {customer_id}."
+
+    def complete_service(self, customer_id: str, service_name: str) -> (bool, str):
+        customer = next((c for c in self.customers if c.customer_id == customer_id), None)
+        if not customer or not customer.stay or not customer.stay.is_active:
+            return False, "Customer not found or not checked in."
+        pending_service = next((s for s in customer.stay.pending_services if s.name == service_name and not s.completed), None)
+        if not pending_service:
+            return False, "Pending service not found."
+        pending_service.mark_completed()
+        customer.stay.pending_services.remove(pending_service)
+        customer.stay.add_service(pending_service)
+        return True, f"Service '{service_name}' completed for customer {customer_id}."
+
+    def get_pending_services(self) -> List[tuple]:
+        pending = []
+        for customer in self.customers:
+            if customer.stay and customer.stay.is_active:
+                for service in customer.stay.pending_services:
+                    if not service.completed:
+                        pending.append((customer.customer_id, service.name))
+        return pending
