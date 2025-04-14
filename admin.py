@@ -18,6 +18,8 @@ class Admin:
         self.reservations = {}
         self.service_providers = {}
         self.cards: List[Card] = []
+        self.room_services = {}
+        self.room_pending_services = {}
 
     def save_to_file(self):
         data = self.to_dict()
@@ -31,7 +33,6 @@ class Admin:
                 data = json.load(f)
             return cls.from_dict(data)
         except FileNotFoundError:
-            # If the file doesn't exist, create a new Admin instance
             return cls(name)
 
     def to_dict(self):
@@ -41,36 +42,37 @@ class Admin:
             "rooms": [room.to_dict() for room in self.rooms],
             "reservations": {cid: stay.to_dict() for cid, stay in self.reservations.items()},
             "service_providers": {name: provider.to_dict() for name, provider in self.service_providers.items()},
-            "cards": [card.to_dict() for card in self.cards]
+            "cards": [card.to_dict() for card in self.cards],
+            "room_services": {room_number: [item.to_dict() for item in items] 
+                             for room_number, items in self.room_services.items()},
+            "room_pending_services": {room_number: [item.to_dict() for item in items] 
+                                     for room_number, items in self.room_pending_services.items()}
         }
 
     @classmethod
     def from_dict(cls, data):
         admin = cls(data["name"])
-        # Deserialize rooms first and create a mapping of room_number to Room object
         admin.rooms = [Room.from_dict(r) for r in data["rooms"]]
         room_map = {room.room_number: room for room in admin.rooms}
-
-        # Deserialize cards and create a mapping of card_id to Card object
         admin.cards = [Card.from_dict(card, room_map) for card in data["cards"]]
         card_map = {card.card_id: card for card in admin.cards}
-
-        # Deserialize customers without their stays, passing room_map and card_map
         admin.customers = [Customer.from_dict(c, room_map, card_map) for c in data["customers"]]
-
-        # Deserialize reservations, passing the customers list and room_map
         admin.reservations = {
             cid: Stay.from_dict(stay_data, admin.customers, room_map)
             for cid, stay_data in data["reservations"].items()
         }
-
-        # Assign stays to customers
         for customer in admin.customers:
             customer.stay = admin.reservations.get(customer.customer_id)
-
-        # Deserialize service providers
-        admin.service_providers = {name: ServiceProvider.from_dict(provider) for name, provider in data["service_providers"].items()}
-
+        admin.service_providers = {name: ServiceProvider.from_dict(provider) 
+                                  for name, provider in data["service_providers"].items()}
+        admin.room_services = {
+            room_number: [ItemService.from_dict(item) for item in items]
+            for room_number, items in data.get("room_services", {}).items()
+        }
+        admin.room_pending_services = {
+            room_number: [ItemService.from_dict(item) for item in items]
+            for room_number, items in data.get("room_pending_services", {}).items()
+        }
         return admin
 
     def add_service_provider(self, provider):
@@ -82,6 +84,10 @@ class Admin:
 
     def add_room(self, room: Room):
         self.rooms.append(room)
+        if room.room_number not in self.room_services:
+            self.room_services[room.room_number] = []
+        if room.room_number not in self.room_pending_services:
+            self.room_pending_services[room.room_number] = []
         self.save_to_file()
 
     def add_customer(self, customer: Customer):
@@ -147,6 +153,11 @@ class Admin:
             return False
 
         room = stay.room
+        for c in self.customers:
+            if c.stay and c.stay.room == room and c.stay.is_active:
+                print(f"Room {room.room_number} is already occupied by another customer.")
+                return False
+
         card = Card(card_id=f"CARD-{customer_id}", room=room)
         card.activate()
         customer.assign_card(card)
@@ -165,24 +176,25 @@ class Admin:
         if not customer or not customer.stay or not customer.stay.is_active:
             return False, f"Customer {customer_id} is not checked in or has no active stay."
 
-        if not customer.card:
-            return False, f"Customer {customer.name} has no card to return."
+        # Check if there is at least one active card associated with the customer's room
+        room = customer.stay.room
+        room_cards = [card for card in self.cards if card.room == room and card.is_active]
+        if not room_cards:
+            return False, f"No active cards available for Room {room.room_number}. Cannot check out."
 
-        if not customer.card.is_active:
-            return False, f"Card for {customer.name} is not active."
-
-        charges = customer.stay.get_service_charges()
+        room_number = customer.stay.room.room_number
+        charges = sum(item.price for item in self.room_services.get(room_number, []))
         if charges > 0:
             print(f"Customer {customer.name} incurred additional charges: ${charges}")
             print(f"Customer {customer.name} paid additional charges: ${charges}")
 
-        # Ensure the card is in self.cards before removing
-        if customer.card in self.cards:
-            self.cards.remove(customer.card)
-        else:
-            print(f"Warning: Card {customer.card.card_id} not found in self.cards during check-out.")
+        # Deactivate and remove all cards associated with the room
+        all_room_cards = [card for card in self.cards if card.room == room]  # Get all cards for the room (active or not)
+        for card in all_room_cards:
+            card.deactivate()
+            self.cards.remove(card)
 
-        customer.card.deactivate()
+        # Clear the customer's assigned card reference (if it exists)
         customer.card = None
 
         check_in_time = customer.stay.start_date
@@ -192,31 +204,38 @@ class Admin:
         if customer_id in self.reservations:
             del self.reservations[customer_id]
 
+        self.room_services[room_number] = []
+        self.room_pending_services[room_number] = []
+
         message = (f"Customer {customer.name} (ID: {customer_id}) checked in at {check_in_time} "
-                   f"and checked out at {check_out_time}.")
+                f"and checked out at {check_out_time}.")
         print(message)
         self.save_to_file()
         return True, message
 
-    def add_service_to_room(self, customer_id: str, service_name: str):
-        customer = next((c for c in self.customers if c.customer_id == customer_id), None)
-        if not customer or not customer.stay or not customer.stay.is_active:
-            print(f"Customer {customer_id} is not checked in or has no active stay.")
+    def add_service_to_room(self, room_number: str, service_name: str):
+        room = next((r for r in self.rooms if r.room_number == room_number), None)
+        if not room:
+            print(f"Room {room_number} not found.")
             return False
 
         hotel_provider = self.get_service_provider("Hotel")
-        if not hotel_provider:
-            print("Hotel service provider not found.")
-            return False
+        room_support_provider = self.get_service_provider("RoomSupport")
+        service_item = None
+        if hotel_provider:
+            service_item = next((item for item in hotel_provider.items if item.name == service_name), None)
+        if not service_item and room_support_provider:
+            service_item = next((item for item in room_support_provider.items if item.name == service_name), None)
 
-        service_item = next((item for item in hotel_provider.items if item.name == service_name), None)
         if not service_item:
-            print(f"Service '{service_name}' not found in Hotel services.")
+            print(f"Service '{service_name}' not found in available services.")
             return False
 
         try:
-            customer.stay.add_service(service_item)
-            print(f"Service '{service_name}' added to stay for Customer {customer.name} in Room {customer.stay.room.room_number}.")
+            if room_number not in self.room_services:
+                self.room_services[room_number] = []
+            self.room_services[room_number].append(service_item)
+            print(f"Service '{service_name}' added to Room {room.room_number}.")
             self.save_to_file()
             return True
         except Exception as e:
@@ -228,16 +247,17 @@ class Admin:
         if not customer or not customer.stay:
             return f"Customer with ID {customer_id} has no active stay."
 
-        service_record = customer.stay.service_record
+        room_number = customer.stay.room.room_number
+        service_record = self.room_services.get(room_number, [])
         if not service_record:
-            return f"No services used by Customer {customer.name} during their stay in Room {customer.stay.room.room_number}."
+            return f"No services used in Room {room_number} during the stay of Customer {customer.name}."
 
         report = f"--- Service Record for Customer {customer.name} (ID: {customer.customer_id}) ---\n"
-        report += f"Room: {customer.stay.room.room_number}\n"
+        report += f"Room: {room_number}\n"
         for item in service_record:
             report += f"- {item.name}: ${item.price}\n"
         report += f"-------------------------------------------------------------------\n"
-        report += f"Total Service Charges: ${customer.stay.get_service_charges()}\n"
+        report += f"Total Service Charges: ${sum(item.price for item in service_record)}\n"
         return report
 
     def get_room_occupancy_details(self) -> str:
@@ -262,6 +282,8 @@ class Admin:
                             assigned_to = f"Assigned to: {cust.name}"
                             break
                     report += f"    - Card ID: {card.card_id}, Active: {card.is_active}, {assigned_to}\n"
+            pending = self.room_pending_services.get(room.room_number, [])
+            report += f"  Pending Services: {', '.join([s.name for s in pending]) or 'None'}\n"
         report += "-----------------------------\n"
         return report
 
@@ -316,38 +338,71 @@ class Admin:
         print(f"Card with ID {card_id} not found.")
         return False
 
-    def request_service(self, customer_id: str, service_name: str) -> (bool, str):
-        customer = next((c for c in self.customers if c.customer_id == customer_id), None)
-        if not customer or not customer.stay or not customer.stay.is_active:
-            return False, "Customer not found or not checked in."
-        provider = self.get_service_provider("Hotel")
-        if not provider:
-            return False, "Service provider not found."
-        item = next((item for item in provider.items if item.name == service_name), None)
-        if not item:
-            return False, "Service not found."
-        customer.stay.pending_services.append(item)
-        self.save_to_file()
-        return True, f"Service '{service_name}' requested for customer {customer_id}."
+    def request_service(self, room_number: str, service_name: str) -> (bool, str):
+        room = next((r for r in self.rooms if r.room_number == room_number), None)
+        if not room:
+            return False, f"Room {room_number} not found."
 
-    def complete_service(self, customer_id: str, service_name: str) -> (bool, str):
-        customer = next((c for c in self.customers if c.customer_id == customer_id), None)
-        if not customer or not customer.stay or not customer.stay.is_active:
-            return False, "Customer not found or not checked in."
-        pending_service = next((s for s in customer.stay.pending_services if s.name == service_name and not s.completed), None)
+        customer = next((c for c in self.customers if c.stay and c.stay.room == room and c.stay.is_active), None)
+        if not customer:
+            return False, f"Room {room_number} is not occupied."
+
+        # Search for the service across all providers
+        service_item = None
+        provider_name = None
+        for name, provider in self.service_providers.items():
+            item = next((item for item in provider.items if item.name == service_name), None)
+            if item:
+                service_item = ItemService(item.name, item.price, name)  # Create a new instance with provider_name
+                provider_name = name
+                break
+
+        if not service_item:
+            return False, f"Service '{service_name}' not found in any provider."
+
+        if room_number not in self.room_pending_services:
+            self.room_pending_services[room_number] = []
+        self.room_pending_services[room_number].append(service_item)
+        self.save_to_file()
+        return True, f"Service '{service_name}' requested for Room {room_number} by {provider_name}."
+
+    def complete_service(self, room_number: str, service_name: str, user_role: str, completion_details: str = None) -> (bool, str):
+        provider_name = "Hotel" if user_role == "service_provider_a" else "RoomSupport"
+        room = next((r for r in self.rooms if r.room_number == room_number), None)
+        if not room:
+            return False, f"Room {room_number} not found."
+        pending_services = self.room_pending_services.get(room_number, [])
+        pending_service = next((s for s in pending_services if s.name == service_name and not s.completed), None)
         if not pending_service:
             return False, "Pending service not found."
+        if pending_service.provider_name != provider_name:
+            return False, f"Service '{service_name}' is not managed by {provider_name}."
+        
+        # Mark the service as completed
         pending_service.mark_completed()
-        customer.stay.pending_services.remove(pending_service)
-        customer.stay.add_service(pending_service)
-        self.save_to_file()
-        return True, f"Service '{service_name}' completed for customer {customer_id}."
+        pending_services.remove(pending_service)
+        self.room_pending_services[room_number] = pending_services
+        if room_number not in self.room_services:
+            self.room_services[room_number] = []
+        self.room_services[room_number].append(pending_service)
 
-    def get_pending_services(self) -> List[tuple]:
+        # Log completion details to a text file if provided
+        if completion_details:
+            log_entry = f"[{datetime.now()}] Room {room_number} - Service '{service_name}' completed by {provider_name}. Details: {completion_details}\n"
+            try:
+                with open("service_completion_log.txt", "a") as log_file:
+                    log_file.write(log_entry)
+            except Exception as e:
+                print(f"Error writing to service completion log: {e}")
+
+        self.save_to_file()
+        return True, f"Service '{service_name}' completed for Room {room_number}."
+
+    def get_pending_services(self, user_role: str) -> List[tuple]:
+        provider_name = "Hotel" if user_role == "service_provider_a" else "RoomSupport"
         pending = []
-        for customer in self.customers:
-            if customer.stay and customer.stay.is_active:
-                for service in customer.stay.pending_services:
-                    if not service.completed:
-                        pending.append((customer.customer_id, service.name))
+        for room_number, services in self.room_pending_services.items():
+            for service in services:
+                if not service.completed and service.provider_name == provider_name:
+                    pending.append((room_number, service.name))
         return pending

@@ -1,12 +1,10 @@
-from typing import List
-from item_service import ItemService
-
 class ServiceProvider:
     def __init__(self, name: str):
         self.name = name
-        self.items: List[ItemService] = []
+        self.items = []
 
-    def add_item(self, item: ItemService):
+    def add_item(self, item: 'ItemService'):
+        item.provider_name = self.name  # Set the provider_name on the item
         self.items.append(item)
 
     def to_dict(self):
@@ -18,5 +16,6 @@ class ServiceProvider:
     @classmethod
     def from_dict(cls, data):
         provider = cls(data["name"])
+        from item_service import ItemService
         provider.items = [ItemService.from_dict(item) for item in data["items"]]
         return provider

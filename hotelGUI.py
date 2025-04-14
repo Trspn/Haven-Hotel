@@ -10,12 +10,10 @@ class HotelManagementGUI:
         self.customer_counter = 1
         self.selected_service_line = None
         self.show_login_screen()
-        self.root.geometry("600x650")
-        # Bind the window close event to save data
+        self.root.geometry("800x700")
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def on_closing(self):
-        # Save data before closing
         self.controller.admin.save_to_file()
         self.root.destroy()
 
@@ -33,7 +31,6 @@ class HotelManagementGUI:
     def process_login(self, password):
         success, message = self.controller.login(password)
         if success:
-            # Determine the next customer ID based on existing customers
             if self.controller.admin.customers:
                 last_customer_id = max(int(c.customer_id.replace("CUST", "")) for c in self.controller.admin.customers)
                 self.customer_counter = last_customer_id + 1
@@ -44,7 +41,17 @@ class HotelManagementGUI:
     def show_main_menu(self):
         self.clear_window()
         role = self.controller.current_user_role
-        tk.Label(self.root, text=f"Welcome, {role.capitalize()}!", font=("Arial", 16)).pack(pady=10)
+        # Custom welcome messages for service providers
+        if role == "admin":
+            welcome_text = "Welcome, Admin!"
+        elif role == "service_provider_a":
+            welcome_text = "Welcome, Room Service A!"
+        elif role == "service_provider_b":
+            welcome_text = "Welcome, Room Service B!"
+        else:
+            welcome_text = "Welcome!"
+
+        tk.Label(self.root, text=welcome_text, font=("Arial", 16)).pack(pady=10)
 
         if role == "admin":
             tk.Button(self.root, text="Manage Customer Reservation", command=self.show_manage_customer_reservation, font=("Arial", 12)).pack(pady=5)
@@ -55,7 +62,7 @@ class HotelManagementGUI:
             tk.Button(self.root, text="View Room Occupancy", command=self.show_room_occupancy, font=("Arial", 12)).pack(pady=5)
             tk.Button(self.root, text="Manage Cards", command=self.show_manage_cards_menu, font=("Arial", 12)).pack(pady=5)
             tk.Button(self.root, text="Logout", command=self.show_login_screen, font=("Arial", 12)).pack(pady=5)
-        elif role == "service_provider":
+        elif role in ["service_provider_a", "service_provider_b"]:
             tk.Button(self.root, text="View Pending Service Requests", command=self.show_pending_requests, font=("Arial", 12)).pack(pady=5)
             tk.Button(self.root, text="Logout", command=self.show_login_screen, font=("Arial", 12)).pack(pady=5)
 
@@ -82,9 +89,16 @@ class HotelManagementGUI:
         if not reservations:
             tk.Label(self.root, text="No pending reservations available.", font=("Arial", 12)).pack()
         else:
-            self.reservation_combobox = ttk.Combobox(self.root, values=[f"{cid} (Room: {stay.room.room_number}, {stay.length} days)" for cid, stay in reservations], font=("Arial", 12))
+            customer_map = {c.customer_id: c.name for c in self.controller.admin.customers}
+            self.reservation_combobox = ttk.Combobox(self.root, values=[
+                f"{cid} - {customer_map[cid]} (Room: {stay.room.room_number}, {stay.length} days)"
+                for cid, stay in reservations
+            ], font=("Arial", 12))
             self.reservation_combobox.pack(pady=5)
-            self.reservation_combobox.set([f"{cid} (Room: {stay.room.room_number}, {stay.length} days)" for cid, stay in reservations][0] if reservations else "")
+            self.reservation_combobox.set([
+                f"{cid} - {customer_map[cid]} (Room: {stay.room.room_number}, {stay.length} days)"
+                for cid, stay in reservations
+            ][0] if reservations else "")
             tk.Button(self.root, text="Update Reservation", command=self.show_update_reservation, font=("Arial", 12)).pack(pady=5)
             tk.Button(self.root, text="Delete Reservation", command=self.delete_reservation_action, font=("Arial", 12)).pack(pady=5)
 
@@ -123,7 +137,7 @@ class HotelManagementGUI:
             messagebox.showerror("Error", "Please select a reservation to update.")
             return
 
-        customer_id = selected_reservation.split(" ")[0]
+        customer_id = selected_reservation.split(" - ")[0]
         self.clear_window()
         tk.Label(self.root, text=f"Update Reservation for {customer_id}", font=("Arial", 14)).pack(pady=10)
 
@@ -165,7 +179,7 @@ class HotelManagementGUI:
             messagebox.showerror("Error", "Please select a reservation to delete.")
             return
 
-        customer_id = selected_reservation.split(" ")[0]
+        customer_id = selected_reservation.split(" - ")[0]
         if messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete the reservation for {customer_id}?"):
             success, message = self.controller.delete_reservation(customer_id)
             if success:
@@ -179,14 +193,20 @@ class HotelManagementGUI:
         tk.Label(self.root, text="Check-in Customer", font=("Arial", 14)).pack(pady=10)
         tk.Label(self.root, text="Select Reservation:", font=("Arial", 12)).pack()
         reservations = [(cid, stay) for cid, stay in self.controller.admin.reservations.items() if stay and not stay.is_active]
-        print("Reservations available for check-in:", [(cid, str(stay)) for cid, stay in reservations])
         if not reservations:
             tk.Label(self.root, text="No pending reservations available.", font=("Arial", 12)).pack()
             tk.Button(self.root, text="Back", command=self.show_main_menu, font=("Arial", 12)).pack(pady=10)
             return
-        self.reservation_combobox = ttk.Combobox(self.root, values=[f"{cid} (Room: {stay.room.room_number})" for cid, stay in reservations], font=("Arial", 12))
+        customer_map = {c.customer_id: c.name for c in self.controller.admin.customers}
+        self.reservation_combobox = ttk.Combobox(self.root, values=[
+            f"{cid} - {customer_map[cid]} (Room: {stay.room.room_number})"
+            for cid, stay in reservations
+        ], font=("Arial", 12))
         self.reservation_combobox.pack(pady=5)
-        self.reservation_combobox.set([f"{cid} (Room: {stay.room.room_number})" for cid, stay in reservations][0] if reservations else "")
+        self.reservation_combobox.set([
+            f"{cid} - {customer_map[cid]} (Room: {stay.room.room_number})"
+            for cid, stay in reservations
+        ][0] if reservations else "")
         self.payment_var = tk.BooleanVar()
         tk.Checkbutton(self.root, text="Payment Done", variable=self.payment_var, font=("Arial", 12)).pack(pady=5)
         tk.Button(self.root, text="Check-in", command=self.check_in_action, font=("Arial", 12)).pack(pady=10)
@@ -197,7 +217,7 @@ class HotelManagementGUI:
         if not selected_reservation:
             messagebox.showerror("Error", "Please select a reservation.")
             return
-        customer_id = selected_reservation.split(" ")[0]
+        customer_id = selected_reservation.split(" - ")[0]
         payment_done = self.payment_var.get()
         success, message = self.controller.check_in_customer(customer_id, payment_done)
         if success:
@@ -210,22 +230,27 @@ class HotelManagementGUI:
         self.clear_window()
         tk.Label(self.root, text="Check-out Customer", font=("Arial", 14)).pack(pady=10)
         tk.Label(self.root, text="Select Customer:", font=("Arial", 12)).pack()
-        customer_ids = [c.customer_id for c in self.controller.admin.customers if c.stay and c.stay.is_active]
-        if not customer_ids:
+        customers = [c for c in self.controller.admin.customers if c.stay and c.stay.is_active]
+        if not customers:
             tk.Label(self.root, text="No checked-in customers available.", font=("Arial", 12)).pack()
             tk.Button(self.root, text="Back", command=self.show_main_menu, font=("Arial", 12)).pack(pady=10)
             return
-        self.customer_combobox = ttk.Combobox(self.root, values=customer_ids, font=("Arial", 12))
+        self.customer_combobox = ttk.Combobox(self.root, values=[
+            f"{c.customer_id} - {c.name}" for c in customers
+        ], font=("Arial", 12))
         self.customer_combobox.pack(pady=5)
-        self.customer_combobox.set(customer_ids[0] if customer_ids else "")
+        self.customer_combobox.set([
+            f"{c.customer_id} - {c.name}" for c in customers
+        ][0] if customers else "")
         tk.Button(self.root, text="Check-out", command=self.check_out_action, font=("Arial", 12)).pack(pady=10)
         tk.Button(self.root, text="Back", command=self.show_main_menu, font=("Arial", 12)).pack()
 
     def check_out_action(self):
-        customer_id = self.customer_combobox.get()
-        if not customer_id:
+        selected_customer = self.customer_combobox.get()
+        if not selected_customer:
             messagebox.showerror("Error", "Please select a customer.")
             return
+        customer_id = selected_customer.split(" - ")[0]
         success, message = self.controller.check_out_customer(customer_id)
         if success:
             messagebox.showinfo("Success", message)
@@ -236,28 +261,30 @@ class HotelManagementGUI:
     def show_request_service(self):
         self.clear_window()
         tk.Label(self.root, text="Request Service", font=("Arial", 14)).pack(pady=10)
-        customer_ids = [c.customer_id for c in self.controller.admin.customers if c.stay and c.stay.is_active]
-        if not customer_ids:
-            tk.Label(self.root, text="No checked-in customers available.", font=("Arial", 12)).pack()
+        occupied_rooms = [c.stay.room for c in self.controller.admin.customers if c.stay and c.stay.is_active]
+        if not occupied_rooms:
+            tk.Label(self.root, text="No occupied rooms available.", font=("Arial", 12)).pack()
             tk.Button(self.root, text="Back", command=self.show_main_menu, font=("Arial", 12)).pack(pady=10)
             return
-        tk.Label(self.root, text="Select Customer:", font=("Arial", 12)).pack()
-        customer_combobox = ttk.Combobox(self.root, values=customer_ids, font=("Arial", 12))
-        customer_combobox.pack(pady=5)
-        customer_combobox.set(customer_ids[0])
+        tk.Label(self.root, text="Select Room:", font=("Arial", 12)).pack()
+        room_combobox = ttk.Combobox(self.root, values=[room.room_number for room in occupied_rooms], font=("Arial", 12))
+        room_combobox.pack(pady=5)
+        room_combobox.set(occupied_rooms[0].room_number)
         tk.Label(self.root, text="Select Service:", font=("Arial", 12)).pack()
-        hotel_provider = self.controller.admin.get_service_provider("Hotel")
-        service_names = [item.name for item in hotel_provider.items] if hotel_provider else []
-        service_combobox = ttk.Combobox(self.root, values=service_names, font=("Arial", 12))
+        # Combine services from all providers for the admin
+        all_services = []
+        for provider in self.controller.admin.service_providers.values():
+            all_services.extend([item.name for item in provider.items])
+        service_combobox = ttk.Combobox(self.root, values=all_services, font=("Arial", 12))
         service_combobox.pack(pady=5)
-        service_combobox.set(service_names[0] if service_names else "")
+        service_combobox.set(all_services[0] if all_services else "")
         tk.Button(self.root, text="Request Service", 
-                 command=lambda: self.request_service_action(customer_combobox.get(), service_combobox.get()), 
+                 command=lambda: self.request_service_action(room_combobox.get(), service_combobox.get()), 
                  font=("Arial", 12)).pack(pady=10)
         tk.Button(self.root, text="Back", command=self.show_main_menu, font=("Arial", 12)).pack()
 
-    def request_service_action(self, customer_id, service_name):
-        success, message = self.controller.request_service(customer_id, service_name)
+    def request_service_action(self, room_number, service_name):
+        success, message = self.controller.request_service(room_number, service_name)
         if success:
             messagebox.showinfo("Success", message)
         else:
@@ -281,36 +308,53 @@ class HotelManagementGUI:
         scrollbar.config(command=self.service_text_area.yview)
 
         self.service_lines = []
-        for idx, (customer_id, service_name) in enumerate(pending_services, 1):
-            line_text = f"Customer: {customer_id} | Service: {service_name}\n"
+        for idx, (room_number, service_name) in enumerate(pending_services, 1):
+            line_text = f"Room: {room_number} | Service: {service_name}\n"
             self.service_text_area.insert(tk.END, line_text)
-            self.service_lines.append((customer_id, service_name))
+            self.service_lines.append((room_number, service_name))
 
         self.service_text_area.config(state=tk.NORMAL)
         self.service_text_area.bind("<Double-1>", self.select_service_line)
 
+        # Add optional completion details text box
+        tk.Label(self.root, text="Completion Details (Optional):", font=("Arial", 12)).pack(pady=5)
+        self.completion_details_entry = tk.Text(self.root, height=3, width=50, font=("Arial", 10))
+        self.completion_details_entry.pack(pady=5)
+
         tk.Button(self.root, text="Mark Selected as Completed", 
-                 command=self.complete_service_action, 
-                 font=("Arial", 12)).pack(pady=5)
+                command=self.complete_service_action, 
+                font=("Arial", 12)).pack(pady=5)
         tk.Button(self.root, text="Back", command=self.show_main_menu, font=("Arial", 12)).pack()
-
-    def select_service_line(self, event):
-        index = self.service_text_area.index("@%d,%d" % (event.x, event.y))
-        line_number = int(index.split('.')[0])
-        if 1 <= line_number <= len(self.service_lines):
-            self.selected_service_line = line_number - 1
-
-            self.service_text_area.tag_remove("highlight", "1.0", tk.END)
-            self.service_text_area.tag_add("highlight", f"{line_number}.0", f"{line_number}.end")
-            self.service_text_area.tag_configure("highlight", background="yellow")
 
     def complete_service_action(self):
         if self.selected_service_line is None:
             messagebox.showerror("Error", "Please double-click a request to select it.")
             return
 
-        customer_id, service_name = self.service_lines[self.selected_service_line]
-        success, message = self.controller.complete_service(customer_id, service_name)
+        room_number, service_name = self.service_lines[self.selected_service_line]
+        # Get the completion details from the text box
+        completion_details = self.completion_details_entry.get("1.0", tk.END).strip()
+        if not completion_details:
+            completion_details = None  # Treat empty input as None
+
+        success, message = self.controller.complete_service(room_number, service_name, completion_details)
+        if success:
+            messagebox.showinfo("Success", message)
+            self.selected_service_line = None
+            self.show_pending_requests()
+        else:
+            messagebox.showerror("Error", message)
+
+    def select_service_line(self, event):
+        index = self.service_text_area.index("@%d,%d" % (event.x, event.y))
+        line_number = int(index.split('.')[0])
+        if 1 <= line_number <= len(self.service_lines):
+            self.selected_service_line = line_number - 1
+            self.service_text_area.tag_remove("highlight", "1.0", tk.END)
+            self.service_text_area.tag_add("highlight", f"{line_number}.0", f"{line_number}.end")
+            self.service_text_area.tag_configure("highlight", background="yellow")
+        room_number, service_name = self.service_lines[self.selected_service_line]
+        success, message = self.controller.complete_service(room_number, service_name)
         if success:
             messagebox.showinfo("Success", message)
             self.selected_service_line = None
@@ -321,31 +365,51 @@ class HotelManagementGUI:
     def show_generate_service_record(self):
         self.clear_window()
         tk.Label(self.root, text="Generate Service Record", font=("Arial", 14)).pack(pady=10)
-        customer_ids = [c.customer_id for c in self.controller.admin.customers if c.stay and c.stay.is_active]
-        if not customer_ids:
+        customers = [c for c in self.controller.admin.customers if c.stay and c.stay.is_active]
+        if not customers:
             tk.Label(self.root, text="No checked-in customers available.", font=("Arial", 12)).pack()
             tk.Button(self.root, text="Back", command=self.show_main_menu, font=("Arial", 12)).pack(pady=10)
             return
-        self.service_record_customer_combobox = ttk.Combobox(self.root, values=customer_ids, font=("Arial", 12))
+        self.service_record_customer_combobox = ttk.Combobox(self.root, values=[
+            f"{c.customer_id} - {c.name}" for c in customers
+        ], font=("Arial", 12))
         self.service_record_customer_combobox.pack(pady=5)
-        self.service_record_customer_combobox.set(customer_ids[0] if customer_ids else "")
+        self.service_record_customer_combobox.set([
+            f"{c.customer_id} - {c.name}" for c in customers
+        ][0] if customers else "")
         tk.Button(self.root, text="Generate Report", command=self.generate_service_record_action, font=("Arial", 12)).pack(pady=10)
         tk.Button(self.root, text="Back", command=self.show_main_menu, font=("Arial", 12)).pack()
 
     def generate_service_record_action(self):
-        customer_id = self.service_record_customer_combobox.get()
-        if not customer_id:
+        selected_customer = self.service_record_customer_combobox.get()
+        if not selected_customer:
             messagebox.showerror("Error", "Please select a customer.")
             return
+        customer_id = selected_customer.split(" - ")[0]
         report = self.controller.generate_customer_service_record(customer_id)
         messagebox.showinfo("Service Record", report)
 
     def show_room_occupancy(self):
         self.clear_window()
         tk.Label(self.root, text="Room Occupancy Details", font=("Arial", 14)).pack(pady=10)
+
+        frame = tk.Frame(self.root)
+        frame.pack(pady=5, fill=tk.BOTH, expand=True)
+
+        scrollbar = tk.Scrollbar(frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        occupancy_text = tk.Text(frame, height=20, width=70, font=("Courier New", 10), 
+                                yscrollcommand=scrollbar.set, wrap=tk.WORD)
+        occupancy_text.pack(pady=5, fill=tk.BOTH, expand=True)
+
+        scrollbar.config(command=occupancy_text.yview)
+
         occupancy_details = self.controller.get_room_occupancy_details()
-        details_label = tk.Label(self.root, text=occupancy_details, font=("Courier New", 10), justify='left')
-        details_label.pack(padx=10, pady=10)
+        occupancy_text.insert(tk.END, occupancy_details)
+
+        occupancy_text.config(state=tk.DISABLED)
+
         tk.Button(self.root, text="Back", command=self.show_main_menu, font=("Arial", 12)).pack(pady=10)
 
     def show_manage_cards_menu(self):

@@ -1,128 +1,145 @@
-import tkinter as tk
-from typing import List
-from tkinter import ttk, messagebox, simpledialog
 from admin import Admin
-from customer import Customer
 from room import Room
-from item_service import ItemService
+from customer import Customer
+from card import Card
 from service_provider import ServiceProvider
+from item_service import ItemService
+from typing import List, Optional
 
 class Controller:
     def __init__(self, admin_name: str):
-        # Load Admin data from file
         self.admin = Admin.load_from_file(admin_name)
         self.current_user_role = None
-        # If no data was loaded (first run), set up initial data
+        self.setup_initial_data()
+
+    def setup_initial_data(self):
+        # Initialize 15 rooms (101 to 115)
         if not self.admin.rooms:
-            self.setup_rooms()
+            for i in range(101, 116):  # 101 to 115 inclusive
+                self.admin.add_room(Room(str(i)))
+        
+        # Initialize two service providers
         if not self.admin.service_providers:
-            self.setup_services()
+            # First service provider: Hotel (Room Service A)
+            hotel_provider = ServiceProvider("Hotel")
+            hotel_provider.add_item(ItemService("Hot Beverage", 2.50))
+            hotel_provider.add_item(ItemService("Cold Beverage", 3.00))
+            hotel_provider.add_item(ItemService("Traditional Breakfast", 15.00))
+            hotel_provider.add_item(ItemService("Buffet Dinner", 25.00))
+            hotel_provider.add_item(ItemService("Spa Experience", 50.00))
+            self.admin.add_service_provider(hotel_provider)
 
-    def setup_rooms(self):
-        room1 = Room("101")
-        room2 = Room("102")
-        room3 = Room("103")
-        room4 = Room("104")
-        room5 = Room("105")
-        room6 = Room("106")
-        room7 = Room("107")
-        self.admin.add_room(room1)
-        self.admin.add_room(room2)
-        self.admin.add_room(room3)
-        self.admin.add_room(room4)
-        self.admin.add_room(room5)
-        self.admin.add_room(room6)
-        self.admin.add_room(room7)
+            # Second service provider: RoomSupport (Room Service B)
+            room_support_provider = ServiceProvider("RoomSupport")
+            room_support_provider.add_item(ItemService("Fresh Towels", 5.00))
+            room_support_provider.add_item(ItemService("Fresh Sheets", 10.00))
+            room_support_provider.add_item(ItemService("Replenish Toiletries", 3.00))
+            room_support_provider.add_item(ItemService("Technical Support", 20.00))
+            self.admin.add_service_provider(room_support_provider)
 
-    def setup_services(self):
-        hotel_provider = ServiceProvider("Hotel")
-        hotel_provider.add_item(ItemService("Hot Beverage", 2.50))
-        hotel_provider.add_item(ItemService("Cold Beverage", 3.00))
-        hotel_provider.add_item(ItemService("Traditional Breakfast", 15.00))
-        hotel_provider.add_item(ItemService("Buffet Dinner", 25.00))
-        hotel_provider.add_item(ItemService("Spa Experience", 50.00))
-        self.admin.add_service_provider(hotel_provider)
+    def login(self, password: str) -> (bool, str):
+        if password == "AD01":
+            self.current_user_role = "admin"
+            return True, "Logged in as Admin."
+        elif password == "SERV01":
+            self.current_user_role = "service_provider_a"
+            return True, "Logged in as Room Service A."
+        elif password == "SERV02":
+            self.current_user_role = "service_provider_b"
+            return True, "Logged in as Room Service B."
+        else:
+            return False, "Invalid password."
 
-    def create_reservation(self, name: str, customer_id: str, room_number: str, length: int):
-        customer = Customer(name, customer_id)
-        self.admin.add_customer(customer)
+    def create_reservation(self, customer_name: str, customer_id: str, room_number: str, length: int) -> (bool, str):
+        if self.current_user_role != "admin":
+            return False, "Unauthorized access."
         room = next((r for r in self.admin.rooms if r.room_number == room_number), None)
         if not room:
             return False, f"Room {room_number} not found."
-        success = self.admin.add_reservation(customer_id, room, length)
-        if success:
-            return True, f"Reservation for {name} (ID: {customer_id}) in room {room_number} for {length} days created successfully."
+        customer = Customer(customer_name, customer_id)
+        self.admin.add_customer(customer)
+        if self.admin.add_reservation(customer_id, room, length):
+            return True, f"Reservation created for {customer_name} (ID: {customer_id}) in Room {room_number}."
         return False, "Failed to create reservation."
 
-    def update_reservation(self, customer_id: str, room_number: str = None, length: int = None):
+    def update_reservation(self, customer_id: str, room_number: str = None, length: int = None) -> (bool, str):
+        if self.current_user_role != "admin":
+            return False, "Unauthorized access."
         room = None
         if room_number:
             room = next((r for r in self.admin.rooms if r.room_number == room_number), None)
             if not room:
                 return False, f"Room {room_number} not found."
-        success = self.admin.update_reservation(customer_id, room, length)
-        if success:
-            return True, f"Reservation for customer {customer_id} updated successfully."
-        return False, "Failed to update reservation (may be checked in or not found)."
+        if self.admin.update_reservation(customer_id, room, length):
+            return True, f"Reservation updated for Customer ID {customer_id}."
+        return False, "Failed to update reservation."
 
-    def delete_reservation(self, customer_id: str):
-        success = self.admin.delete_reservation(customer_id)
-        if success:
-            return True, f"Reservation for customer {customer_id} deleted successfully."
-        return False, "Failed to delete reservation (may be checked in or not found)."
-
-    def check_in_customer(self, customer_id: str, payment_done: bool = False):
-        success = self.admin.check_in(customer_id, payment_done)
-        return success, f"Check-in {'successful' if success else 'failed'} for customer {customer_id}."
-
-    def check_out_customer(self, customer_id: str):
-        success, message = self.admin.check_out(customer_id)
-        return success, message
-
-    def add_service_to_room(self, customer_id: str, service_name: str):
-        success = self.admin.add_service_to_room(customer_id, service_name)
-        return success, f"Adding service '{service_name}' to room for customer {customer_id} was {'successful' if success else 'failed'}."
-
-    def generate_customer_service_record(self, customer_id: str):
-        report = self.admin.generate_customer_service_record(customer_id)
-        return report
-
-    def get_room_occupancy_details(self):
-        return self.admin.get_room_occupancy_details()
-
-    def get_cards_for_room(self, room_number: str):
-        return self.admin.get_cards_for_room(room_number)
-
-    def add_card_to_room(self, room_number: str, card_id: str):
-        return self.admin.add_card_to_room(room_number, card_id)
-
-    def delete_card(self, card_id: str):
-        return self.admin.delete_card(card_id)
-
-    def activate_card(self, card_id: str):
-        return self.admin.activate_card(card_id)
-
-    def deactivate_card(self, card_id: str):
-        return self.admin.deactivate_card(card_id)
-
-    def login(self, password: str) -> (bool, str):
-        if password == "AD01":
-            self.current_user_role = "admin"
-            return True, "Logged in as admin."
-        elif password == "SERV01":
-            self.current_user_role = "service_provider"
-            return True, "Logged in as service provider."
-        return False, "Invalid password."
-
-    def request_service(self, customer_id: str, service_name: str) -> (bool, str):
+    def delete_reservation(self, customer_id: str) -> (bool, str):
         if self.current_user_role != "admin":
-            return False, "Only admins can request services."
-        return self.admin.request_service(customer_id, service_name)
+            return False, "Unauthorized access."
+        if self.admin.delete_reservation(customer_id):
+            return True, f"Reservation deleted for Customer ID {customer_id}."
+        return False, "Failed to delete reservation."
 
-    def complete_service(self, customer_id: str, service_name: str) -> (bool, str):
-        if self.current_user_role != "service_provider":
-            return False, "Only service providers can complete service requests."
-        return self.admin.complete_service(customer_id, service_name)
+    def check_in_customer(self, customer_id: str, payment_done: bool) -> (bool, str):
+        if self.current_user_role != "admin":
+            return False, "Unauthorized access."
+        success = self.admin.check_in(customer_id, payment_done)
+        if success:
+            return True, f"Customer ID {customer_id} checked in successfully."
+        return False, "Failed to check in customer."
+
+    def check_out_customer(self, customer_id: str) -> (bool, str):
+        if self.current_user_role != "admin":
+            return False, "Unauthorized access."
+        return self.admin.check_out(customer_id)
+
+    def request_service(self, room_number: str, service_name: str) -> (bool, str):
+        if self.current_user_role != "admin":
+            return False, "Unauthorized access."
+        return self.admin.request_service(room_number, service_name)
+
+    def complete_service(self, room_number: str, service_name: str, completion_details: str = None) -> (bool, str):
+        if not (self.current_user_role in ["service_provider_a", "service_provider_b"]):
+            return False, "Unauthorized access."
+        return self.admin.complete_service(room_number, service_name, self.current_user_role, completion_details)
 
     def get_pending_services(self) -> List[tuple]:
-        return self.admin.get_pending_services()
+        if not (self.current_user_role in ["service_provider_a", "service_provider_b"]):
+            return []
+        return self.admin.get_pending_services(self.current_user_role)
+
+    def generate_customer_service_record(self, customer_id: str) -> str:
+        if self.current_user_role != "admin":
+            return "Unauthorized access."
+        return self.admin.generate_customer_service_record(customer_id)
+
+    def get_room_occupancy_details(self) -> str:
+        if self.current_user_role != "admin":
+            return "Unauthorized access."
+        return self.admin.get_room_occupancy_details()
+
+    def get_cards_for_room(self, room_number: str) -> List[Card]:
+        if self.current_user_role != "admin":
+            return []
+        return self.admin.get_cards_for_room(room_number)
+
+    def add_card_to_room(self, room_number: str, card_id: str) -> Optional[Card]:
+        if self.current_user_role != "admin":
+            return None
+        return self.admin.add_card_to_room(room_number, card_id)
+
+    def delete_card(self, card_id: str) -> bool:
+        if self.current_user_role != "admin":
+            return False
+        return self.admin.delete_card(card_id)
+
+    def activate_card(self, card_id: str) -> bool:
+        if self.current_user_role != "admin":
+            return False
+        return self.admin.activate_card(card_id)
+
+    def deactivate_card(self, card_id: str) -> bool:
+        if self.current_user_role != "admin":
+            return False
+        return self.admin.deactivate_card(card_id)
