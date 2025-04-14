@@ -1,3 +1,4 @@
+import json
 from typing import List, Optional
 from datetime import datetime
 from customer import Customer
@@ -8,6 +9,8 @@ from item_service import ItemService
 from service_provider import ServiceProvider
 
 class Admin:
+    DATA_FILE = "hotel_data.json"
+
     def __init__(self, name: str):
         self.name = name
         self.customers: List[Customer] = []
@@ -16,17 +19,74 @@ class Admin:
         self.service_providers = {}
         self.cards: List[Card] = []
 
+    def save_to_file(self):
+        data = self.to_dict()
+        with open(self.DATA_FILE, 'w') as f:
+            json.dump(data, f, indent=4)
+
+    @classmethod
+    def load_from_file(cls, name: str):
+        try:
+            with open(cls.DATA_FILE, 'r') as f:
+                data = json.load(f)
+            return cls.from_dict(data)
+        except FileNotFoundError:
+            # If the file doesn't exist, create a new Admin instance
+            return cls(name)
+
+    def to_dict(self):
+        return {
+            "name": self.name,
+            "customers": [customer.to_dict() for customer in self.customers],
+            "rooms": [room.to_dict() for room in self.rooms],
+            "reservations": {cid: stay.to_dict() for cid, stay in self.reservations.items()},
+            "service_providers": {name: provider.to_dict() for name, provider in self.service_providers.items()},
+            "cards": [card.to_dict() for card in self.cards]
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        admin = cls(data["name"])
+        # Deserialize rooms first and create a mapping of room_number to Room object
+        admin.rooms = [Room.from_dict(r) for r in data["rooms"]]
+        room_map = {room.room_number: room for room in admin.rooms}
+
+        # Deserialize cards and create a mapping of card_id to Card object
+        admin.cards = [Card.from_dict(card, room_map) for card in data["cards"]]
+        card_map = {card.card_id: card for card in admin.cards}
+
+        # Deserialize customers without their stays, passing room_map and card_map
+        admin.customers = [Customer.from_dict(c, room_map, card_map) for c in data["customers"]]
+
+        # Deserialize reservations, passing the customers list and room_map
+        admin.reservations = {
+            cid: Stay.from_dict(stay_data, admin.customers, room_map)
+            for cid, stay_data in data["reservations"].items()
+        }
+
+        # Assign stays to customers
+        for customer in admin.customers:
+            customer.stay = admin.reservations.get(customer.customer_id)
+
+        # Deserialize service providers
+        admin.service_providers = {name: ServiceProvider.from_dict(provider) for name, provider in data["service_providers"].items()}
+
+        return admin
+
     def add_service_provider(self, provider):
         self.service_providers[provider.name] = provider
+        self.save_to_file()
 
     def get_service_provider(self, name: str):
         return self.service_providers.get(name)
 
     def add_room(self, room: Room):
         self.rooms.append(room)
+        self.save_to_file()
 
     def add_customer(self, customer: Customer):
         self.customers.append(customer)
+        self.save_to_file()
 
     def add_reservation(self, customer_id: str, room: Room, length: int):
         customer = next((c for c in self.customers if c.customer_id == customer_id), None)
@@ -36,6 +96,7 @@ class Admin:
         stay.is_active = False
         self.reservations[customer_id] = stay
         customer.assign_stay(stay)
+        self.save_to_file()
         return True
 
     def update_reservation(self, customer_id: str, room: Room = None, length: int = None):
@@ -43,13 +104,14 @@ class Admin:
             return False
         stay = self.reservations[customer_id]
         if stay.is_active:
-            return False  # Cannot update an active (checked-in) stay
+            return False
         if room:
             stay.room = room
         if length is not None:
             stay.length = length
         self.reservations[customer_id] = stay
         stay.customer.assign_stay(stay)
+        self.save_to_file()
         return True
 
     def delete_reservation(self, customer_id: str):
@@ -57,11 +119,12 @@ class Admin:
             return False
         stay = self.reservations[customer_id]
         if stay.is_active:
-            return False  # Cannot delete an active (checked-in) stay
+            return False
         del self.reservations[customer_id]
         customer = next((c for c in self.customers if c.customer_id == customer_id), None)
         if customer:
             customer.stay = None
+        self.save_to_file()
         return True
 
     def check_in(self, customer_id: str, payment_done: bool = False) -> bool:
@@ -94,6 +157,7 @@ class Admin:
         self.reservations[customer_id] = stay
 
         print(f"Customer {customer.name} successfully checked in to {room} and received {card}.")
+        self.save_to_file()
         return True
 
     def check_out(self, customer_id: str) -> (bool, str):
@@ -112,23 +176,26 @@ class Admin:
             print(f"Customer {customer.name} incurred additional charges: ${charges}")
             print(f"Customer {customer.name} paid additional charges: ${charges}")
 
-        # Remove the card from the system
-        self.cards.remove(customer.card)
+        # Ensure the card is in self.cards before removing
+        if customer.card in self.cards:
+            self.cards.remove(customer.card)
+        else:
+            print(f"Warning: Card {customer.card.card_id} not found in self.cards during check-out.")
+
         customer.card.deactivate()
         customer.card = None
 
-        # End the stay and record the check-out time
         check_in_time = customer.stay.start_date
         check_out_time = datetime.now()
         customer.stay.end_stay(check_out_time)
 
-        # Remove the reservation from the list
         if customer_id in self.reservations:
             del self.reservations[customer_id]
 
         message = (f"Customer {customer.name} (ID: {customer_id}) checked in at {check_in_time} "
                    f"and checked out at {check_out_time}.")
         print(message)
+        self.save_to_file()
         return True, message
 
     def add_service_to_room(self, customer_id: str, service_name: str):
@@ -150,6 +217,7 @@ class Admin:
         try:
             customer.stay.add_service(service_item)
             print(f"Service '{service_name}' added to stay for Customer {customer.name} in Room {customer.stay.room.room_number}.")
+            self.save_to_file()
             return True
         except Exception as e:
             print(f"Error adding service: {e}")
@@ -211,6 +279,7 @@ class Admin:
         new_card = Card(card_id=card_id, room=room)
         self.cards.append(new_card)
         print(f"Card {card_id} added to Room {room_number}.")
+        self.save_to_file()
         return new_card
 
     def delete_card(self, card_id: str) -> bool:
@@ -222,6 +291,7 @@ class Admin:
                     break
             self.cards.remove(card_to_delete)
             print(f"Card {card_id} deleted.")
+            self.save_to_file()
             return True
         print(f"Card with ID {card_id} not found.")
         return False
@@ -231,6 +301,7 @@ class Admin:
         if card:
             card.activate()
             print(f"Card {card_id} activated for Room {card.room.room_number}.")
+            self.save_to_file()
             return True
         print(f"Card with ID {card_id} not found.")
         return False
@@ -240,6 +311,7 @@ class Admin:
         if card:
             card.deactivate()
             print(f"Card {card_id} deactivated for Room {card.room.room_number}.")
+            self.save_to_file()
             return True
         print(f"Card with ID {card_id} not found.")
         return False
@@ -255,6 +327,7 @@ class Admin:
         if not item:
             return False, "Service not found."
         customer.stay.pending_services.append(item)
+        self.save_to_file()
         return True, f"Service '{service_name}' requested for customer {customer_id}."
 
     def complete_service(self, customer_id: str, service_name: str) -> (bool, str):
@@ -267,6 +340,7 @@ class Admin:
         pending_service.mark_completed()
         customer.stay.pending_services.remove(pending_service)
         customer.stay.add_service(pending_service)
+        self.save_to_file()
         return True, f"Service '{service_name}' completed for customer {customer_id}."
 
     def get_pending_services(self) -> List[tuple]:

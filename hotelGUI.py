@@ -8,9 +8,16 @@ class HotelManagementGUI:
         self.root.title("Hotel Management System")
         self.controller = Controller("Hotel Admin")
         self.customer_counter = 1
+        self.selected_service_line = None
         self.show_login_screen()
         self.root.geometry("600x650")
-        self.selected_service_line = None  # To track the selected line in the Text widget
+        # Bind the window close event to save data
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def on_closing(self):
+        # Save data before closing
+        self.controller.admin.save_to_file()
+        self.root.destroy()
 
     def clear_window(self):
         for widget in self.root.winfo_children():
@@ -26,6 +33,10 @@ class HotelManagementGUI:
     def process_login(self, password):
         success, message = self.controller.login(password)
         if success:
+            # Determine the next customer ID based on existing customers
+            if self.controller.admin.customers:
+                last_customer_id = max(int(c.customer_id.replace("CUST", "")) for c in self.controller.admin.customers)
+                self.customer_counter = last_customer_id + 1
             self.show_main_menu()
         else:
             messagebox.showerror("Error", message)
@@ -52,7 +63,6 @@ class HotelManagementGUI:
         self.clear_window()
         tk.Label(self.root, text="Manage Customer Reservation", font=("Arial", 14)).pack(pady=10)
 
-        # Add new reservation
         tk.Label(self.root, text="Add New Reservation", font=("Arial", 12, "bold")).pack(pady=5)
         tk.Label(self.root, text="Customer Name:", font=("Arial", 12)).pack()
         self.customer_name_entry = tk.Entry(self.root, font=("Arial", 12))
@@ -67,7 +77,6 @@ class HotelManagementGUI:
         self.length_entry.pack(pady=5)
         tk.Button(self.root, text="Create Reservation", command=self.create_reservation_action, font=("Arial", 12)).pack(pady=5)
 
-        # Update or delete existing reservations
         tk.Label(self.root, text="Existing Reservations", font=("Arial", 12, "bold")).pack(pady=10)
         reservations = [(cid, stay) for cid, stay in self.controller.admin.reservations.items() if stay and not stay.is_active]
         if not reservations:
@@ -263,7 +272,6 @@ class HotelManagementGUI:
             tk.Button(self.root, text="Back", command=self.show_main_menu, font=("Arial", 12)).pack(pady=10)
             return
 
-        # Use a Text widget with a scrollbar to prevent cutoff
         frame = tk.Frame(self.root)
         frame.pack(pady=5, fill=tk.BOTH, expand=True)
         scrollbar = tk.Scrollbar(frame)
@@ -272,16 +280,13 @@ class HotelManagementGUI:
         self.service_text_area.pack(pady=5, fill=tk.BOTH, expand=True)
         scrollbar.config(command=self.service_text_area.yview)
 
-        # Store service requests with their line numbers
         self.service_lines = []
         for idx, (customer_id, service_name) in enumerate(pending_services, 1):
             line_text = f"Customer: {customer_id} | Service: {service_name}\n"
             self.service_text_area.insert(tk.END, line_text)
             self.service_lines.append((customer_id, service_name))
 
-        self.service_text_area.config(state=tk.NORMAL)  # Allow interaction
-
-        # Bind double-click to select a line
+        self.service_text_area.config(state=tk.NORMAL)
         self.service_text_area.bind("<Double-1>", self.select_service_line)
 
         tk.Button(self.root, text="Mark Selected as Completed", 
@@ -290,13 +295,11 @@ class HotelManagementGUI:
         tk.Button(self.root, text="Back", command=self.show_main_menu, font=("Arial", 12)).pack()
 
     def select_service_line(self, event):
-        # Get the line number where the double-click occurred
         index = self.service_text_area.index("@%d,%d" % (event.x, event.y))
         line_number = int(index.split('.')[0])
         if 1 <= line_number <= len(self.service_lines):
-            self.selected_service_line = line_number - 1  # Adjust for 0-based indexing
+            self.selected_service_line = line_number - 1
 
-            # Highlight the selected line
             self.service_text_area.tag_remove("highlight", "1.0", tk.END)
             self.service_text_area.tag_add("highlight", f"{line_number}.0", f"{line_number}.end")
             self.service_text_area.tag_configure("highlight", background="yellow")
@@ -306,13 +309,12 @@ class HotelManagementGUI:
             messagebox.showerror("Error", "Please double-click a request to select it.")
             return
 
-        # Get the selected service request
         customer_id, service_name = self.service_lines[self.selected_service_line]
         success, message = self.controller.complete_service(customer_id, service_name)
         if success:
             messagebox.showinfo("Success", message)
-            self.selected_service_line = None  # Reset selection
-            self.show_pending_requests()  # Refresh the list
+            self.selected_service_line = None
+            self.show_pending_requests()
         else:
             messagebox.showerror("Error", message)
 

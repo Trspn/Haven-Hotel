@@ -9,10 +9,14 @@ from service_provider import ServiceProvider
 
 class Controller:
     def __init__(self, admin_name: str):
-        self.admin = Admin(admin_name)
+        # Load Admin data from file
+        self.admin = Admin.load_from_file(admin_name)
         self.current_user_role = None
-        self.setup_rooms()
-        self.setup_services()
+        # If no data was loaded (first run), set up initial data
+        if not self.admin.rooms:
+            self.setup_rooms()
+        if not self.admin.service_providers:
+            self.setup_services()
 
     def setup_rooms(self):
         room1 = Room("101")

@@ -9,8 +9,14 @@ class ServiceProvider:
     def add_item(self, item: ItemService):
         self.items.append(item)
 
-    def get_items(self) -> List[ItemService]:
-        return self.items
+    def to_dict(self):
+        return {
+            "name": self.name,
+            "items": [item.to_dict() for item in self.items]
+        }
 
-    def __str__(self):
-        return f"Service Provider: {self.name}"
+    @classmethod
+    def from_dict(cls, data):
+        provider = cls(data["name"])
+        provider.items = [ItemService.from_dict(item) for item in data["items"]]
+        return provider

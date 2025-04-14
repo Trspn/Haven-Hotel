@@ -7,5 +7,15 @@ class ItemService:
     def mark_completed(self):
         self.completed = True
 
-    def __str__(self):
-        return f"{self.name} (${self.price})"
+    def to_dict(self):
+        return {
+            "name": self.name,
+            "price": self.price,
+            "completed": self.completed
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        item = cls(data["name"], data["price"])
+        item.completed = data["completed"]
+        return item
